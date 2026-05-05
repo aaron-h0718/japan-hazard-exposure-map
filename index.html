@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+    <html>
+        <head>
+            <title>Japan Hazard Exposure Map</title>
+            <meta charset="utf-8" />
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+            <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+            <style>
+                #map {height: 100vh;}
+
+                /* TITLE */
+                #title {
+                    position: absolute;
+                    top: 12px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: rgba(255,255,255,0.95);
+                    padding: 10px 20px;
+                    font-size: 18px;
+                    font-weight: bold;
+                    border-radius: 6px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+                    z-index: 1000;
+                    text-align: center;
+                }
+                
+                .info.legend {
+                    background: rgba(255, 255, 255, 0.85);
+                    padding: 8px;
+                    color: #333;
+                    border-radius: 5px;
+                    font-size: 12px;
+                    line-height: 18px;
+                    box-shadow: 0 0 8px rgba(0,0,0,0.2);
+                    max-width: 200px;
+                }
+
+                .info.legend i {
+                    display: inline-block;
+                    width: 18px;
+                    height: 18px;
+                    margin-right: 8px;
+                    opacity: 0.7;
+                }         
+
+                .leaflet-control-layers {
+                    width: 200px;
+                }
+
+                .leaflet-top.leaflet-left .info.legend {
+                    margin-top: 60px;
+                    margin-left: 10px;
+                }
+                
+            </style>
+        </head>
+        
+        <body>
+            <div id="title">
+                Japan Hazard Exposure Map: Volcano & Earthquake Risk vs Population
+            </div>
+
+            <div id="map">                
+            </div>
+
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+            <script>               
+                // Map Setup
+                var map = L.map('map', {
+                    minZoom: 5,
+                    maxZoom: 10
+                }).setView([36.5, 138], 5);
+                // Clean basemap (no labels)
+                var lightBasemap = L.tileLayer(
+                    'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
+                    { attribution: '&copy; OpenStreetMap contributors & CartoDB' }
+                );
+
+                var darkBasemap = L.tileLayer(
+                    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+                    { attribution: '&copy; OpenStreetMap contributors & CartoDB' }
+                );
+                // default
+                lightBasemap.addTo(map);
+                // Layers
+                var prefectureLayer;             
+                var holoceneVolcanoLayer;
+                var inactiveVolcanoLayer;
+                var volcanoBufferLayer;
+                var earthquakeLayer;
+                // Population Data & Style
+                var populationData = {
+                    1: 5224614, 2: 1237984, 3: 1210534, 4: 2301996, 5: 959502,
+                    6: 1068027, 7: 1833152, 8: 2867009, 9: 1933146, 10: 1939110,
+                    11: 7344765, 12: 6284480, 13: 14047594, 14: 9237337, 15: 2201272,
+                    16: 1034814, 17: 1132526, 18: 766863, 19: 809974, 20: 2048011,
+                    21: 1978742, 22: 3633202, 23: 7483128, 24: 1770254, 25: 1413610,
+                    26: 2578087, 27: 8837685, 28: 5465002, 29: 1324473, 30: 914069,
+                    31: 553407, 32: 671602, 33: 1888432, 34: 2799702, 35: 1342059,
+                    36: 728633, 37: 956069, 38: 1334841, 39: 691527, 40: 5101556,
+                    41: 811442, 42: 1312317, 43: 1746740, 44: 1123852, 45: 1069576,
+                    46: 1594225, 47: 1467480
+                };
+                // Grayscale Choropleth
+                function getColor(d) {
+                    return  d > 10000000 ? '#08306b' :
+                            d > 5000000  ? '#08519c' :
+                            d > 3000000  ? '#2171b5' :
+                            d > 2000000  ? '#4292c6' :
+                            d > 1000000  ? '#6baed6' :
+                                           '#9ecae1';            
+                }
+
+                function getQuakeColor(mag) {
+                    return  mag > 5 ? '#5a2d0c' : // dark brown
+                            mag > 3 ? '#8b4513' : // brown
+                                      '#d2b48c';  // tan
+                }
+                
+                function createQuakeIcon(color){
+                    return L.divIcon({
+                        className: '',
+                        html: `
+                        <div style="                            
+                            width: 10px;
+                            height: 10px;
+                            background: ${color};
+                            transform: rotate(45deg);
+                            border: 1px solid #000;
+                        "></div>
+                        `,
+                        iconSize: [12,12]
+                    });
+                }
+                               
+                function createTriangleIcon(color) {
+                    return L.divIcon({
+                        className: '',
+                        html: `<div style="
+                            width: 0;
+                            height: 0;
+                            border-left: 7px solid transparent;
+                            border-right: 7px solid transparent;
+                            border-bottom: 12px solid ${color};
+                            filter: drop-shadow(0 0 1px #000);
+                        "></div>`,
+                        iconSize: [12, 12]
+                    });
+                }   
+                // Prefectures Interaction
+                function highlightFeature(e){
+                    var layer = e.target;                    
+                    layer.setStyle({
+                        weight: 3,
+                        color: '#666',
+                        fillOpacity: 0.7
+                    });                    
+                }
+                
+                function resetHighlight(e){
+                    prefectureLayer.resetStyle(e.target);
+                }
+                
+                function style(feature) {
+                    var pop = populationData[feature.properties.id];
+                    return {
+                        fillColor: getColor(pop),
+                        weight: 1,
+                        color: '#ffffff',
+                        fillOpacity: 0.7
+                    };
+                }
+                
+                function onEachFeature(feature, layer){
+                    layer.on({
+                        mouseover: highlightFeature,
+                        mouseout: resetHighlight
+                    });
+
+                    var pop = populationData[feature.properties.id];                    
+                    layer.bindPopup(
+                        "<b>Prefecture:</b> " + feature.properties.nam +
+                        "<br><b>Population:</b> " + pop.toLocaleString()
+                    );
+                }              
+                // Load data
+                Promise.all([
+                    fetch('japan_prefectures.geojson').then(res => res.json()),
+                    fetch('japan_volcanoes.geojson').then(res => res.json()),
+                    fetch('japan_volcanoes_holocene.geojson').then(res => res.json())
+                ])
+                .then(([prefData, volcData, holoData]) => {
+                    // Prefecture layer
+                    prefectureLayer = L.geoJSON(prefData,{
+                        style: function(feature) {
+                            var pop = populationData[feature.properties.id];
+                            return {
+                                fillColor: getColor(pop),
+                                weight: 1,
+                                color: 'white',
+                                fillOpacity: 0.5
+                            };
+                        },
+                        onEachFeature: function(feature, layer){
+                            var pop = populationData[feature.properties.id];
+                            layer.bindPopup("<b>Prefecture:</b> " + feature.properties.nam +
+                            "<br><b>Population:</b> " + pop.toLocaleString());
+                        }
+                    }).addTo(map);
+
+                    function calculatePopulationExposure(latlng){
+                        var buffer = turf.buffer(turf.point([latlng.lng, latlng.lat]),50,{units:'kilometers',steps:4});
+                        var total = 0;
+                        prefectureLayer.eachLayer(function(layer){
+                            var pop = populationData[layer.feature.properties.id];
+                            if(pop && turf.booleanIntersects(layer.feature,buffer)){
+                                total += pop;
+                            }
+                        });
+                        return total;
+                    }
+
+                    function getRiskColor(pop) {
+                        return  pop > 5000000 ? "red" :
+                                pop > 1000000 ? "orange" :
+                                pop > 500000  ? "yellow" : "green";
+                    }
+
+                    function getRiskLevel(pop) {
+                        return  pop > 5000000 ? "Extreme" :
+                                pop > 1000000 ? "High" :
+                                pop > 500000  ? "Moderate" : "Low";
+                    }
+                    // Active Volcanoes 
+                    holoceneVolcanoLayer = L.geoJSON(holoData, {
+                        pointToLayer: function(feature, latlng){
+                            var pop = calculatePopulationExposure(latlng);
+                            return L.marker(latlng, {
+                                icon: createTriangleIcon(getRiskColor(pop))                         
+                            });
+                        },
+                        onEachFeature: function(feature, layer){
+                            layer.bindPopup(function(){
+                                var pop = calculatePopulationExposure(layer.getLatLng());
+                                 
+                                var name =  feature.properties.Name ||
+                                            feature.properties["Volcano Name"] ||
+                                            "Unknown";
+
+                                return "<b>Volcano:</b> " + name +
+                                "<br><b>Status:</b> Active (Holocene)" +                                
+                                "<br><b>Risk Level:</b> " + getRiskLevel(pop) +
+                                "<br><b>Population within 50 km (31 mi):</b> " + pop.toLocaleString();
+                            });
+                        }
+                    });
+
+                    var holoceneNames = new Set(holoData.features.map(f => f.properties.Name));
+
+                    inactiveVolcanoLayer = L.geoJSON(volcData,{
+                        filter: function(feature){
+                            return !holoceneNames.has(feature.properties.Name);
+                        },
+                        pointToLayer: function(feature, latlng){
+                            return L.marker(latlng,{
+                                icon: createTriangleIcon("rgba(0,0,0,0.6)")
+                            });
+                        },
+                        onEachFeature: function(feature, layer){
+                            var name =  feature.properties.Name ||
+                                        feature.properties["Volcano Name"] ||
+                                        "Unknown";
+                            
+                            layer.bindPopup(
+                                "<b>Volcano:</b> " + name +
+                                "<br><b>Status:</b> Inactive (Pre-Holocene)"
+                            );
+                        }
+                    });                    
+                    // Volcano Buffers (50 km)
+                    volcanoBufferLayer = L.geoJSON(holoData,{
+                        pointToLayer: function(feature, latlng){
+                            return L.circle(latlng,{
+                                radius:50000,
+                                color: "red",
+                                weight: 1,
+                                fillOpacity: 0.1,
+                                interactive: false,                                
+                            });
+                        }                    
+                    });                 
+                    // Earthquake layer
+                    earthquakeLayer = L.geoJSON(null,{
+                        pointToLayer: function(feature, latlng){
+                            var color = getQuakeColor(feature.properties.mag);
+                            return L.marker(latlng,{
+                                icon: createQuakeIcon(color)                           
+                            });
+                        },
+                        onEachFeature: function(feature, layer){
+                            layer.bindPopup(function(){
+                                var time = new Date(feature.properties.time);
+                                return  "<b>Magnitude:</b> " + feature.properties.mag +
+                                        "<br><b>Location:</b> " + feature.properties.place +
+                                        "<br><b>Date:</b> " + time.toLocaleDateString() +
+                                        "<br><b>Time:</b> " + time.toLocaleTimeString();
+                            });
+                        }
+                    });                                     
+                    // Add layers                  
+                    holoceneVolcanoLayer.addTo(map);                                                           
+                    
+                    inactiveVolcanoLayer.bringToBack();
+                    holoceneVolcanoLayer.bringToFront();
+                    // Layer control
+                    var overlayMaps = {                     
+                        "Active Volcanoes (Holocene)": holoceneVolcanoLayer,
+                        "Inactive Volcanoes": inactiveVolcanoLayer,
+                        "Volcano Buffers (50km / 31mi)": volcanoBufferLayer,
+                        "Earthquakes": earthquakeLayer
+                    };
+
+                    var baseMaps = {
+                        "Dark Mode": darkBasemap,
+                        "Light Mode": lightBasemap
+                    };
+
+                    L.control.layers(baseMaps, overlayMaps, {collapsed:false}).addTo(map);
+
+                    map.on('overlayadd', function(e) {
+                        if (e.name === "Earthquakes") {
+
+                            if (!earthquakeLayer._loaded) {
+
+                                fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_week.geojson')
+                                .then(res => res.json())
+                                .then(data => {
+
+                                    var japanQuakes = {
+                                        type: "FeatureCollection",
+                                        features: data.features.filter(function(feature){
+                                            var lon = feature.geometry.coordinates[0];
+                                            var lat = feature.geometry.coordinates[1];
+                                            return lat >= 31 && lat <= 45 && lon >= 130 && lon <= 145 && feature.properties.mag >= 2.5;
+                                        })
+                                    };
+
+                                    earthquakeLayer.addData(japanQuakes);
+                                    earthquakeLayer._loaded = true;
+
+                                });
+                            }
+                        }
+                    });
+                    // Info Box
+                    var infoBox = L.control({position:'topleft'});
+                    infoBox.onAdd=function(){
+                        var div=L.DomUtil.create('div','info legend');
+                        div.innerHTML=`
+                        <b>How Volcano Risk is Defined</b><hr>
+
+                        <b> Active (Holocene)</b><br>
+                        Volcanoes that have erupted within the last ~11,700 years.
+                        These are considered capable of future eruptions and are the 
+                        primary focus of risk analysis.<br><br>
+
+                        <b>Risk Calculations</b><br>
+                        A 50 km buffer is created around each active volcano.<br>
+                        Population within this zone is summed using prefecture-level 
+                        data to estimate potential exposure.<br><br>
+
+                        <b>Why this matters</b><br>
+                        This connects physical hazards to potential human impact,
+                        rather than just mapping volcano locations.<br><br>
+
+                        <b>Important Context</b><br>
+                        This is a simplified model. Real volcanic hazards 
+                        vary by eruption type, terrain, and wind direction.
+                        This approach provides a general estimate of human 
+                        exposure rather than exact impact zones.
+                        `;
+                        return div;
+                    };
+                    infoBox.addTo(map);
+                    // Legend
+                    var legend = L.control({position: 'bottomright'});
+
+                    legend.onAdd = function() {
+                        this._div = L.DomUtil.create('div', 'info legend');
+                        updateLegend();
+                        return this._div;
+                    };
+
+                    legend.addTo(map);
+
+                    function updateLegend() {
+                        var div = legend._div;
+                        var grades = [0, 500000, 1000000, 2000000, 5000000, 10000000];
+
+                        div.innerHTML = "";
+    
+                        if (map.hasLayer(holoceneVolcanoLayer) || map.hasLayer(inactiveVolcanoLayer)) {
+                            div.innerHTML += "<b>Map Symbols</b><br>";
+
+                            div.innerHTML += "<hr><b>Volcano Risk</b><br>";
+                            div.innerHTML += '<i style="background:red"></i> Extreme (>5M)<br>';
+                            div.innerHTML += '<i style="background:orange"></i> High (1M–5M)<br>';
+                            div.innerHTML += '<i style="background:yellow"></i> Moderate (500k–1M)<br>';
+                            div.innerHTML += '<i style="background:green"></i> Low (<500k)<br>';
+
+                            div.innerHTML += "<hr><b>Volcano Status</b><br>";
+                            div.innerHTML += `
+                            <div style="display:flex; align-items:center;">
+                                <div style="
+                                    width: 0;
+                                    height: 0;
+                                    border-left: 6px solid transparent;
+                                    border-right: 6px solid transparent;
+                                    border-bottom: 10px solid red;
+                                    margin-right:6px;
+                                "></div>
+                                Active (risk-based)
+                            </div>`;
+                            div.innerHTML += `
+                            <div style="display:flex; align-items:center;">
+                                <div style="
+                                    width: 0;
+                                    height: 0;
+                                    border-left: 6px solid transparent;
+                                    border-right: 6px solid transparent;
+                                    border-bottom: 10px solid rgba(0,0,0,0.6);
+                                    margin-right:6px;
+                                "></div>
+                                Inactive
+                            </div>`;
+                        }
+
+                        if (map.hasLayer(volcanoBufferLayer)) {
+                            div.innerHTML += '<div style="display:flex;"><div style="width:12px;height:12px;border:1px solid red;background:rgba(255,0,0,0.2);margin-right:6px;"></div>50 km (31 mi) Impact Zone</div>';
+                        }
+
+                        if (map.hasLayer(earthquakeLayer)) {
+                            div.innerHTML += "<hr><b>Earthquakes</b><br>";
+                            div.innerHTML += '<i style="background:#5a2d0c"></i> > 5<br>';
+                            div.innerHTML += '<i style="background:#8b4513"></i> 3–5<br>';
+                            div.innerHTML += '<i style="background:#d2b48c"></i> < 3<br>';
+                        }
+
+                        if (map.hasLayer(prefectureLayer)) {
+                            div.innerHTML += "<hr><b>Population</b><br>";
+                            for (var i = 0; i < grades.length; i++) {
+                                div.innerHTML += '<i style="background:' + getColor(grades[i] + 1) + '"></i> ' +
+                                (grades[i]/1000000).toFixed(1) + (grades[i+1] ? 'M–' + (grades[i+1]/1000000).toFixed(1) + 'M<br>' : '+');
+                            }
+                        }
+                    }
+
+                    map.on('overlayadd', updateLegend);
+                    map.on('overlayremove', updateLegend);
+                    map.on('overlayadd', function(e) {
+                        if (e.layer === inactiveVolcanoLayer) {
+                            inactiveVolcanoLayer.bringToBack();
+                        }
+                        if (e.layer === holoceneVolcanoLayer) {
+                            holoceneVolcanoLayer.bringToFront();
+                        }
+                    });
+
+                })            
+                .catch(error => {
+                    console.error("Error loading GeoJSON:", error);
+                });
+                
+            </script>
+        </body>
+    </html>
+
+
